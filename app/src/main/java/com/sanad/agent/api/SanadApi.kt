@@ -1,0 +1,38 @@
+package com.sanad.agent.api
+
+import com.sanad.agent.model.*
+import retrofit2.Response
+import retrofit2.http.*
+
+interface SanadApi {
+    
+    @POST("api/orders")
+    suspend fun createOrder(@Body order: CreateOrderRequest): Response<Order>
+    
+    @GET("api/orders")
+    suspend fun getOrders(): Response<List<Order>>
+    
+    @GET("api/orders/pending-claims")
+    suspend fun getPendingClaims(): Response<List<PendingClaim>>
+    
+    @GET("api/orders/pending-escalations")
+    suspend fun getPendingEscalations(): Response<List<PendingClaim>>
+    
+    @POST("api/orders/{id}/claim-sent")
+    suspend fun markClaimSent(@Path("id") orderId: Int): Response<Order>
+    
+    @POST("api/orders/{id}/support-reply")
+    suspend fun submitSupportReply(
+        @Path("id") orderId: Int,
+        @Body reply: SupportReplyRequest
+    ): Response<Order>
+    
+    @POST("api/orders/{id}/success")
+    suspend fun markSuccess(
+        @Path("id") orderId: Int,
+        @Body success: SuccessRequest
+    ): Response<Order>
+    
+    @GET("api/stats")
+    suspend fun getStats(): Response<StatsResponse>
+}

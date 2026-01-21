@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">سند</string>
+    <string name="accessibility_service_description">يراقب سند تطبيقات التوصيل لاكتشاف التأخير والمطالبة بتعويض تلقائياً. لا يتم جمع أي بيانات شخصية.</string>
+    
+    <!-- Status -->
+    <string name="status_monitoring">يراقب</string>
+    <string name="status_delayed">تأخر</string>
+    <string name="status_claim_ready">جاهز للإرسال</string>
+    <string name="status_success">نجح</string>
+    
+    <!-- Notifications -->
+    <string name="notification_channel_monitor">مراقبة الطلبات</string>
+    <string name="notification_channel_claims">التعويضات</string>
+    <string name="notification_monitoring_title">سند يراقب طلباتك</string>
+    <string name="notification_monitoring_text">سيتم إبلاغك فوراً عند تأخر أي طلب</string>
+    
+    <!-- Actions -->
+    <string name="action_approve">نعم، طالب بتعويض</string>
+    <string name="action_dismiss">لا شكراً</string>
+    <string name="action_enable">تفعيل الخدمة</string>
+    <string name="action_settings">الإعدادات</string>
+    
+    <!-- Stats -->
+    <string name="stats_total_recovered">المبلغ المسترد</string>
+    <string name="stats_total_claims">الشكاوى الناجحة</string>
+    <string name="stats_escalated_wins">فوز بالتصعيد</string>
+</resources>
