@@ -35,4 +35,11 @@ interface SanadApi {
     
     @GET("api/stats")
     suspend fun getStats(): Response<StatsResponse>
+    
+    // Test Mode APIs
+    @POST("api/test/create-order")
+    suspend fun createTestOrder(@Body request: TestOrderRequest): Response<TestOrderResponse>
+    
+    @DELETE("api/test/clear")
+    suspend fun clearTestOrders(): Response<ClearTestResponse>
 }
