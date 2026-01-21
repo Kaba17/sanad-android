@@ -155,18 +155,18 @@ class MainActivity : AppCompatActivity() {
         val dialog = AlertDialog.Builder(this, R.style.Theme_Sanad_Dialog)
         
         val message = buildString {
-            append("📱 ${order.appName}\n")
-            append("🔢 رقم الطلب: ${order.orderId}\n\n")
-            append("📊 الحالة: ${statusInfo.first}\n")
+            append("التطبيق: ${order.appName}\n")
+            append("رقم الطلب: ${order.orderId}\n\n")
+            append("الحالة: ${statusInfo.first}\n")
             append(statusInfo.second)
             
             if (order.isDelayed == true) {
-                append("\n\n⚠️ تم رصد تأخير في هذا الطلب")
+                append("\n\nتم رصد تأخير في هذا الطلب")
             }
             
             if (!order.complaintText.isNullOrEmpty()) {
-                append("\n\n━━━━━━━━━━━━━━━━━━━━\n")
-                append("📝 الشكوى الجاهزة:\n\n")
+                append("\n\n-------------------\n")
+                append("الشكوى الجاهزة:\n\n")
                 append(order.complaintText)
             }
         }
@@ -176,11 +176,11 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("إغلاق", null)
         
         if (!order.complaintText.isNullOrEmpty()) {
-            dialog.setNeutralButton("📋 نسخ الشكوى") { _, _ ->
+            dialog.setNeutralButton("نسخ الشكوى") { _, _ ->
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 val clip = android.content.ClipData.newPlainText("complaint", order.complaintText)
                 clipboard.setPrimaryClip(clip)
-                Toast.makeText(this, "تم نسخ الشكوى ✓", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "تم نسخ الشكوى", Toast.LENGTH_SHORT).show()
             }
         }
         
