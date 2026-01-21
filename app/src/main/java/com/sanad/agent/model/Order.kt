@@ -60,3 +60,19 @@ enum class CompensationStatus(val value: String) {
     ESCALATED("escalated"),
     SUCCESS("success")
 }
+
+// Test Mode Models
+data class TestOrderRequest(
+    val scenario: String // "delayed", "on_time", "soon"
+)
+
+data class TestOrderResponse(
+    val success: Boolean,
+    val order: Order?,
+    val scenario: String?
+)
+
+data class ClearTestResponse(
+    val success: Boolean,
+    val deleted: Int
+)
