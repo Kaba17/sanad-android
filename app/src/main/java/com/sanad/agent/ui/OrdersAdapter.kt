@@ -34,7 +34,7 @@ class OrdersAdapter(
         private val statusIndicator: View = itemView.findViewById(R.id.statusIndicator)
 
         fun bind(order: Order) {
-            appIcon.text = getAppEmoji(order.appName)
+            appIcon.text = getAppInitial(order.appName)
             appName.text = order.appName
             
             val statusInfo = getStatusInfo(order)
@@ -61,14 +61,14 @@ class OrdersAdapter(
             itemView.setOnClickListener { onOrderClick(order) }
         }
         
-        private fun getAppEmoji(appName: String): String {
+        private fun getAppInitial(appName: String): String {
             return when {
-                appName.contains("هنقر", ignoreCase = true) -> "🍔"
-                appName.contains("جاهز", ignoreCase = true) -> "🍕"
-                appName.contains("تويو", ignoreCase = true) -> "📦"
-                appName.contains("مرسول", ignoreCase = true) -> "🛵"
-                appName.contains("كريم", ignoreCase = true) -> "🚗"
-                else -> "📱"
+                appName.contains("هنقر", ignoreCase = true) -> "ه"
+                appName.contains("جاهز", ignoreCase = true) -> "ج"
+                appName.contains("تويو", ignoreCase = true) -> "ت"
+                appName.contains("مرسول", ignoreCase = true) -> "م"
+                appName.contains("كريم", ignoreCase = true) -> "ك"
+                else -> appName.firstOrNull()?.uppercase() ?: "س"
             }
         }
         
