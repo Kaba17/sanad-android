@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#10B981</color>
-    <color name="primary_dark">#059669</color>
-    <color name="primary_variant">#047857</color>
+    <color name="primary">#6366F1</color>
+    <color name="primary_dark">#4F46E5</color>
+    <color name="primary_variant">#4338CA</color>
     <color name="secondary">#06B6D4</color>
     <color name="accent">#8B5CF6</color>
     
@@ -10,7 +10,7 @@
     <color name="surface">#FFFFFF</color>
     <color name="error">#EF4444</color>
     <color name="warning">#F59E0B</color>
-    <color name="success">#10B981</color>
+    <color name="success">#22C55E</color>
     
     <color name="on_primary">#FFFFFF</color>
     <color name="on_secondary">#FFFFFF</color>
@@ -18,19 +18,17 @@
     <color name="on_surface">#334155</color>
     <color name="on_error">#FFFFFF</color>
     
-    <color name="text_primary">#1E293B</color>
+    <color name="text_primary">#0F172A</color>
     <color name="text_secondary">#64748B</color>
     <color name="text_tertiary">#94A3B8</color>
     
     <color name="divider">#E2E8F0</color>
     <color name="card_background">#FFFFFF</color>
     
-    <color name="status_monitoring">#3B82F6</color>
-    <color name="status_intervening">#F97316</color>
-    <color name="status_claim_ready">#8B5CF6</color>
-    <color name="status_awaiting">#A855F7</color>
+    <color name="status_monitoring">#6366F1</color>
+    <color name="status_intervening">#F59E0B</color>
+    <color name="status_claim_ready">#22C55E</color>
+    <color name="status_awaiting">#3B82F6</color>
     <color name="status_escalated">#EF4444</color>
     <color name="status_success">#10B981</color>
-    
-    <color name="test_mode_bg">#1E293B</color>
 </resources>
