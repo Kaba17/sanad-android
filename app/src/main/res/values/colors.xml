@@ -24,4 +24,13 @@
     
     <color name="divider">#E2E8F0</color>
     <color name="card_background">#FFFFFF</color>
+    
+    <color name="status_monitoring">#3B82F6</color>
+    <color name="status_intervening">#F97316</color>
+    <color name="status_claim_ready">#8B5CF6</color>
+    <color name="status_awaiting">#A855F7</color>
+    <color name="status_escalated">#EF4444</color>
+    <color name="status_success">#10B981</color>
+    
+    <color name="test_mode_bg">#1E293B</color>
 </resources>
