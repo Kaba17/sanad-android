@@ -224,4 +224,62 @@ class SanadApiClient(private val context: Context) {
             Result.failure(e)
         }
     }
+    
+    // SSL Proxy - Send parsed order from network interception
+    suspend fun sendInterceptedOrder(
+        orderId: String,
+        restaurantName: String,
+        deliveryApp: String,
+        status: String,
+        eta: String?,
+        rawJson: String
+    ): Result<Order> {
+        return try {
+            val request = InterceptedOrderRequest(
+                orderId = orderId,
+                restaurantName = restaurantName,
+                deliveryApp = deliveryApp,
+                status = status,
+                eta = eta,
+                rawJson = rawJson
+            )
+            val response = api.sendInterceptedOrder(request)
+            if (response.isSuccessful && response.body() != null) {
+                Log.d(TAG, "Intercepted order sent: $orderId from $restaurantName")
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(Exception("Server error: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending intercepted order", e)
+            Result.failure(e)
+        }
+    }
+    
+    // SSL Proxy - Send raw intercept data for analysis
+    suspend fun sendRawIntercept(
+        hostname: String,
+        path: String,
+        method: String,
+        responseBody: String
+    ): Result<InterceptedDataResponse> {
+        return try {
+            val request = RawInterceptRequest(
+                hostname = hostname,
+                path = path,
+                method = method,
+                responseBody = responseBody
+            )
+            val response = api.sendRawIntercept(request)
+            if (response.isSuccessful && response.body() != null) {
+                Log.d(TAG, "Raw intercept sent: $method $hostname$path")
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(Exception("Server error: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending raw intercept", e)
+            Result.failure(e)
+        }
+    }
 }
