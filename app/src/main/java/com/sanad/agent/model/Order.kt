@@ -82,3 +82,15 @@ data class ExtractedOrderInfo(
     val eta: String?,
     val confidence: Double?
 )
+
+// Network Interception Models
+data class InterceptedDataRequest(
+    @SerializedName("payload") val payload: String
+)
+
+data class InterceptedDataResponse(
+    val success: Boolean,
+    val message: String? = null,
+    val order: Order? = null,
+    val action: String? = null
+)
