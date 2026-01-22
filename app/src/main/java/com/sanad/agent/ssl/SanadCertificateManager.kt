@@ -40,7 +40,11 @@ class SanadCertificateManager(private val context: Context) {
     private var caKeyPair: KeyPair? = null
     private var caCertificate: X509Certificate? = null
     
-    private val generatedCerts = mutableMapOf<String, Pair<X509Certificate, PrivateKey>>()
+    // Thread-safe cache for generated host certificates
+    private val generatedCerts = java.util.concurrent.ConcurrentHashMap<String, Pair<X509Certificate, PrivateKey>>()
+    
+    // Lock for certificate generation to prevent duplicate generation
+    private val certGenerationLock = Any()
     
     fun initialize(): Boolean {
         return try {
@@ -140,61 +144,68 @@ class SanadCertificateManager(private val context: Context) {
     }
     
     fun generateHostCertificate(hostname: String): Pair<X509Certificate, PrivateKey>? {
+        // Check cache first (thread-safe read)
         generatedCerts[hostname]?.let { return it }
         
-        return try {
-            val keyPairGenerator = KeyPairGenerator.getInstance("RSA")
-            keyPairGenerator.initialize(2048, SecureRandom())
-            val hostKeyPair = keyPairGenerator.generateKeyPair()
+        // Synchronize certificate generation to prevent duplicate work
+        return synchronized(certGenerationLock) {
+            // Double-check after acquiring lock
+            generatedCerts[hostname]?.let { return@synchronized it }
             
-            val issuer = X500Name("CN=Sanad Root CA, O=Sanad Consumer Rights, C=SA")
-            val subject = X500Name("CN=$hostname, O=Sanad Intercepted, C=SA")
-            val serial = BigInteger(160, SecureRandom())
-            val notBefore = Date()
-            val notAfter = Date(System.currentTimeMillis() + 365L * 24 * 60 * 60 * 1000)
-            
-            val certBuilder = JcaX509v3CertificateBuilder(
-                issuer,
-                serial,
-                notBefore,
-                notAfter,
-                subject,
-                hostKeyPair.public
-            )
-            
-            certBuilder.addExtension(
-                Extension.basicConstraints,
-                true,
-                BasicConstraints(false)
-            )
-            
-            val sanBuilder = org.bouncycastle.asn1.x509.GeneralNamesBuilder()
-            sanBuilder.addName(org.bouncycastle.asn1.x509.GeneralName(
-                org.bouncycastle.asn1.x509.GeneralName.dNSName, hostname
-            ))
-            certBuilder.addExtension(
-                Extension.subjectAlternativeName,
-                false,
-                sanBuilder.build()
-            )
-            
-            val signer = JcaContentSignerBuilder("SHA256WithRSA")
-                .setProvider(BouncyCastleProvider.PROVIDER_NAME)
-                .build(caKeyPair!!.private)
-            
-            val certHolder = certBuilder.build(signer)
-            val hostCert = JcaX509CertificateConverter()
-                .setProvider(BouncyCastleProvider.PROVIDER_NAME)
-                .getCertificate(certHolder)
-            
-            val result = Pair(hostCert, hostKeyPair.private)
-            generatedCerts[hostname] = result
-            
-            Log.d(TAG, "Generated certificate for: $hostname")
-            result
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to generate certificate for $hostname", e)
-            null
+            try {
+                val keyPairGenerator = KeyPairGenerator.getInstance("RSA")
+                keyPairGenerator.initialize(2048, SecureRandom())
+                val hostKeyPair = keyPairGenerator.generateKeyPair()
+                
+                val issuer = X500Name("CN=Sanad Root CA, O=Sanad Consumer Rights, C=SA")
+                val subject = X500Name("CN=$hostname, O=Sanad Intercepted, C=SA")
+                val serial = BigInteger(160, SecureRandom())
+                val notBefore = Date()
+                val notAfter = Date(System.currentTimeMillis() + 365L * 24 * 60 * 60 * 1000)
+                
+                val certBuilder = JcaX509v3CertificateBuilder(
+                    issuer,
+                    serial,
+                    notBefore,
+                    notAfter,
+                    subject,
+                    hostKeyPair.public
+                )
+                
+                certBuilder.addExtension(
+                    Extension.basicConstraints,
+                    true,
+                    BasicConstraints(false)
+                )
+                
+                val sanBuilder = org.bouncycastle.asn1.x509.GeneralNamesBuilder()
+                sanBuilder.addName(org.bouncycastle.asn1.x509.GeneralName(
+                    org.bouncycastle.asn1.x509.GeneralName.dNSName, hostname
+                ))
+                certBuilder.addExtension(
+                    Extension.subjectAlternativeName,
+                    false,
+                    sanBuilder.build()
+                )
+                
+                val signer = JcaContentSignerBuilder("SHA256WithRSA")
+                    .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                    .build(caKeyPair!!.private)
+                
+                val certHolder = certBuilder.build(signer)
+                val hostCert = JcaX509CertificateConverter()
+                    .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                    .getCertificate(certHolder)
+                
+                val result = Pair(hostCert, hostKeyPair.private)
+                generatedCerts[hostname] = result
+                
+                Log.d(TAG, "Generated certificate for: $hostname")
+                result
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to generate certificate for $hostname", e)
+                null
+            }
         }
     }
     
