@@ -1,12 +1,12 @@
 package com.sanad.agent.vpn
 
 import android.util.Log
-import com.github.AgitoXIV.netbare.http.HttpInterceptor
-import com.github.AgitoXIV.netbare.http.HttpInterceptorFactory
-import com.github.AgitoXIV.netbare.http.HttpRequest
-import com.github.AgitoXIV.netbare.http.HttpRequestChain
-import com.github.AgitoXIV.netbare.http.HttpResponse
-import com.github.AgitoXIV.netbare.http.HttpResponseChain
+import com.github.megatronking.netbare.http.HttpInterceptor
+import com.github.megatronking.netbare.http.HttpInterceptorFactory
+import com.github.megatronking.netbare.http.HttpRequest
+import com.github.megatronking.netbare.http.HttpRequestChain
+import com.github.megatronking.netbare.http.HttpResponse
+import com.github.megatronking.netbare.http.HttpResponseChain
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
@@ -21,7 +21,7 @@ class SanadHttpInterceptorFactory(
 
 class SanadHttpInterceptor(
     private val deliveryInterceptor: DeliveryAppInterceptor
-) : HttpInterceptor {
+) : HttpInterceptor() {
     
     companion object {
         private const val TAG = "SanadHttpInterceptor"
