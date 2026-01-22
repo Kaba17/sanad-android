@@ -33,6 +33,24 @@
             </intent-filter>
         </activity>
 
+        <!-- Certificate Installation Activity -->
+        <activity
+            android:name=".ui.CertificateActivity"
+            android:exported="false"
+            android:label="تثبيت شهادة سند"
+            android:theme="@style/Theme.Sanad" />
+
+        <!-- FileProvider for sharing certificate file -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Accessibility Service - Reads delivery app screens -->
         <service
             android:name=".service.SanadAccessibilityService"
