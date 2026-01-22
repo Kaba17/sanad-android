@@ -207,4 +207,21 @@ class SanadApiClient(private val context: Context) {
             Result.failure(e)
         }
     }
+    
+    // Network Interception - Send intercepted order data to server
+    suspend fun sendInterceptedData(jsonPayload: String): Result<InterceptedDataResponse> {
+        return try {
+            val request = InterceptedDataRequest(jsonPayload)
+            val response = api.sendInterceptedData(request)
+            if (response.isSuccessful && response.body() != null) {
+                Log.d(TAG, "Intercepted data sent successfully")
+                Result.success(response.body()!!)
+            } else {
+                Result.failure(Exception("Server error: ${response.code()}"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending intercepted data", e)
+            Result.failure(e)
+        }
+    }
 }
