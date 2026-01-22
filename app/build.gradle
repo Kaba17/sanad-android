@@ -72,7 +72,7 @@ dependencies {
     implementation 'androidx.work:work-runtime-ktx:2.9.0'
     
     // Network Interception - NetBare for SSL/TLS MITM
-    implementation 'com.github.AgitoXIV:NetBare-Android:v3.0.1'
+    implementation 'com.github.AgitoXIV:NetBare:v3.0.1'
     
     // BouncyCastle for SSL certificate handling
     implementation 'org.bouncycastle:bcprov-jdk15on:1.70'
