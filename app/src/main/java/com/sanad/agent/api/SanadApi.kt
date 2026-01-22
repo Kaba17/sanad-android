@@ -43,4 +43,12 @@ interface SanadApi {
     // Network Interception - Send raw intercepted data
     @POST("api/intercept/order")
     suspend fun sendInterceptedData(@Body data: InterceptedDataRequest): Response<InterceptedDataResponse>
+    
+    // SSL Proxy - Send parsed order from network interception
+    @POST("api/intercept/ssl-order")
+    suspend fun sendInterceptedOrder(@Body data: InterceptedOrderRequest): Response<Order>
+    
+    // SSL Proxy - Send raw intercept for analysis
+    @POST("api/intercept/raw")
+    suspend fun sendRawIntercept(@Body data: RawInterceptRequest): Response<InterceptedDataResponse>
 }
