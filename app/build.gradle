@@ -14,8 +14,8 @@ android {
         versionCode 1
         versionName "1.0.0"
 
-        // Server URL - change this to your deployed Sanad server
-        buildConfigField "String", "SANAD_SERVER_URL", '"https://YOUR-REPLIT-URL.replit.app"'
+        // Server URL - Replit development server
+        buildConfigField "String", "SANAD_SERVER_URL", '"https://fc65bfa4-3bc2-49c9-85e0-af2dbfc23fb7-00-2mdqg4i8qn90y.kirk.replit.dev"'
     }
 
     buildTypes {
