@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.github.AgitoXIV.netbare.NetBare
 import com.github.AgitoXIV.netbare.NetBareConfig
 import com.github.AgitoXIV.netbare.NetBareListener
+import com.github.AgitoXIV.netbare.http.HttpInterceptorFactory
 import com.github.AgitoXIV.netbare.ssl.JKS
 import com.sanad.agent.R
 import com.sanad.agent.api.SanadApiClient
@@ -127,8 +128,8 @@ class SanadVpnService : VpnService(), NetBareListener {
         }
     }
     
-    private fun interceptorFactories(): List<Any> {
-        return listOf(interceptor)
+    private fun interceptorFactories(): List<HttpInterceptorFactory> {
+        return listOf(SanadHttpInterceptorFactory(interceptor))
     }
     
     private fun createNotificationChannel() {
