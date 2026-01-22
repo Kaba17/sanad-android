@@ -31,6 +31,10 @@ class SanadProxyService : Service() {
         
         const val ACTION_START = "com.sanad.agent.proxy.START"
         const val ACTION_STOP = "com.sanad.agent.proxy.STOP"
+        const val ACTION_STATUS_CHANGED = "com.sanad.agent.proxy.STATUS_CHANGED"
+        const val ACTION_ERROR = "com.sanad.agent.proxy.ERROR"
+        const val EXTRA_IS_RUNNING = "is_running"
+        const val EXTRA_ERROR_MESSAGE = "error_message"
         
         @Volatile
         var isRunning = false
@@ -84,34 +88,67 @@ class SanadProxyService : Service() {
             return
         }
         
+        val serverUrl = getSharedPreferences("sanad_prefs", MODE_PRIVATE)
+            .getString("server_url", "") ?: ""
+        
+        if (serverUrl.isEmpty()) {
+            Log.e(TAG, "Server URL not configured")
+            broadcastError("يجب ضبط رابط الخادم أولاً")
+            stopSelf()
+            return
+        }
+        
+        if (!isPortAvailable(8888)) {
+            Log.e(TAG, "Port 8888 already in use")
+            broadcastError("المنفذ 8888 مستخدم بالفعل")
+            stopSelf()
+            return
+        }
+        
         startForeground(NOTIFICATION_ID, createNotification())
+        isRunning = true
+        broadcastStatus(true)
         
         serviceScope.launch {
             try {
-                val serverUrl = getSharedPreferences("sanad_prefs", MODE_PRIVATE)
-                    .getString("server_url", "") ?: ""
-                
-                if (serverUrl.isEmpty()) {
-                    Log.e(TAG, "Server URL not configured")
-                    stopSelf()
-                    return@launch
-                }
-                
                 val certManager = SanadCertificateManager(this@SanadProxyService)
                 certManager.initialize()
                 
                 httpProxy = SanadHttpProxy(certManager, serverUrl)
                 httpProxy?.start()
                 
-                isRunning = true
                 Log.i(TAG, "Proxy started on port 8888")
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start proxy", e)
                 isRunning = false
+                broadcastError("فشل تشغيل Proxy: ${e.message}")
+                broadcastStatus(false)
                 stopSelf()
             }
         }
+    }
+    
+    private fun isPortAvailable(port: Int): Boolean {
+        return try {
+            java.net.ServerSocket(port).use { true }
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private fun broadcastStatus(running: Boolean) {
+        val intent = Intent(ACTION_STATUS_CHANGED).apply {
+            putExtra(EXTRA_IS_RUNNING, running)
+        }
+        sendBroadcast(intent)
+    }
+    
+    private fun broadcastError(message: String) {
+        val intent = Intent(ACTION_ERROR).apply {
+            putExtra(EXTRA_ERROR_MESSAGE, message)
+        }
+        sendBroadcast(intent)
     }
     
     private fun stopProxy() {
@@ -125,6 +162,7 @@ class SanadProxyService : Service() {
         
         httpProxy = null
         isRunning = false
+        broadcastStatus(false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
