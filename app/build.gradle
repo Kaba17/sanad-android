@@ -40,6 +40,10 @@ android {
     }
 }
 
+repositories {
+    maven { url 'https://jitpack.io' }
+}
+
 dependencies {
     // Android Core
     implementation 'androidx.core:core-ktx:1.12.0'
@@ -66,4 +70,11 @@ dependencies {
     
     // WorkManager for background tasks
     implementation 'androidx.work:work-runtime-ktx:2.9.0'
+    
+    // Network Interception - NetBare for SSL/TLS MITM
+    implementation 'com.github.AgitoXIV:NetBare-Android:v3.0.1'
+    
+    // BouncyCastle for SSL certificate handling
+    implementation 'org.bouncycastle:bcprov-jdk15on:1.70'
+    implementation 'org.bouncycastle:bcpkix-jdk15on:1.70'
 }
