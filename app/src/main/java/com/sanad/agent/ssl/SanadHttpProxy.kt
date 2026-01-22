@@ -17,6 +17,7 @@ class SanadHttpProxy(
         private const val TAG = "SanadHttpProxy"
         const val PROXY_PORT = 8888
         private const val BUFFER_SIZE = 32768
+        private const val SOCKET_TIMEOUT = 30000
         
         private val DELIVERY_APP_DOMAINS = setOf(
             "hungerstation.com",
@@ -33,6 +34,7 @@ class SanadHttpProxy(
     }
     
     private var serverSocket: ServerSocket? = null
+    @Volatile
     private var isRunning = false
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
@@ -52,6 +54,7 @@ class SanadHttpProxy(
         
         return try {
             serverSocket = ServerSocket(PROXY_PORT, 100, InetAddress.getByName("127.0.0.1"))
+            serverSocket?.soTimeout = 0 // Block indefinitely on accept
             isRunning = true
             
             scope.launch {
@@ -85,8 +88,15 @@ class SanadHttpProxy(
                     serverSocket?.accept()
                 }
                 clientSocket?.let { socket ->
+                    socket.soTimeout = SOCKET_TIMEOUT
                     scope.launch {
-                        handleClient(socket)
+                        try {
+                            handleClient(socket)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error handling client", e)
+                        } finally {
+                            socket.closeQuietly()
+                        }
                     }
                 }
             } catch (e: SocketException) {
@@ -100,38 +110,28 @@ class SanadHttpProxy(
     }
     
     private suspend fun handleClient(clientSocket: Socket) {
-        try {
-            val clientInput = BufferedInputStream(clientSocket.getInputStream())
-            val clientOutput = BufferedOutputStream(clientSocket.getOutputStream())
-            
-            val requestLine = readLine(clientInput)
-            if (requestLine.isNullOrEmpty()) {
-                clientSocket.close()
-                return
-            }
-            
-            Log.d(TAG, "Request: $requestLine")
-            
-            val parts = requestLine.split(" ")
-            if (parts.size < 3) {
-                clientSocket.close()
-                return
-            }
-            
-            val method = parts[0]
-            val target = parts[1]
-            
-            if (method == "CONNECT") {
-                handleConnectRequest(clientSocket, clientInput, clientOutput, target)
-            } else {
-                handleHttpRequest(clientSocket, clientInput, clientOutput, method, target)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error handling client", e)
-        } finally {
-            try {
-                clientSocket.close()
-            } catch (e: Exception) { }
+        val clientInput = BufferedInputStream(clientSocket.getInputStream())
+        val clientOutput = BufferedOutputStream(clientSocket.getOutputStream())
+        
+        val requestLine = readLine(clientInput)
+        if (requestLine.isNullOrEmpty()) {
+            return
+        }
+        
+        Log.d(TAG, "Request: $requestLine")
+        
+        val parts = requestLine.split(" ")
+        if (parts.size < 3) {
+            return
+        }
+        
+        val method = parts[0]
+        val target = parts[1]
+        
+        if (method == "CONNECT") {
+            handleConnectRequest(clientSocket, clientInput, clientOutput, target)
+        } else {
+            handleHttpRequest(clientSocket, clientInput, clientOutput, method, target, requestLine)
         }
     }
     
@@ -145,11 +145,13 @@ class SanadHttpProxy(
         val hostname = hostPort[0]
         val port = if (hostPort.size > 1) hostPort[1].toIntOrNull() ?: 443 else 443
         
+        // Read remaining headers
         while (true) {
             val line = readLine(clientInput)
             if (line.isNullOrEmpty()) break
         }
         
+        // Send 200 Connection Established
         val response = "HTTP/1.1 200 Connection Established\r\n\r\n"
         withContext(Dispatchers.IO) {
             clientOutput.write(response.toByteArray())
@@ -157,195 +159,250 @@ class SanadHttpProxy(
         }
         
         if (isDeliveryAppDomain(hostname)) {
-            handleSSLInterception(clientSocket, hostname, port)
+            performSSLInterception(clientSocket, hostname, port)
         } else {
+            // For non-delivery apps, just tunnel the connection
             tunnelConnection(clientSocket, hostname, port)
         }
     }
     
-    private suspend fun handleSSLInterception(
+    /**
+     * Performs proper SSL MITM interception:
+     * 1. Accept TLS from client using our generated certificate (server mode)
+     * 2. Establish TLS connection to real origin server (client mode)
+     * 3. Forward requests and responses bidirectionally while intercepting
+     */
+    private suspend fun performSSLInterception(
         clientSocket: Socket,
         hostname: String,
         port: Int
     ) {
-        val sslContext = certificateManager.createSSLContext(hostname)
-        if (sslContext == null) {
+        val serverSSLContext = certificateManager.createSSLContext(hostname)
+        if (serverSSLContext == null) {
+            Log.w(TAG, "Failed to create SSL context for $hostname, falling back to tunnel")
             tunnelConnection(clientSocket, hostname, port)
             return
         }
         
+        var clientSSLSocket: SSLSocket? = null
+        var serverSSLSocket: SSLSocket? = null
+        
         try {
-            val sslServerSocketFactory = sslContext.serverSocketFactory as SSLServerSocketFactory
+            // Step 1: Create SSL socket to accept TLS from client (act as server)
+            // The key is to wrap the existing client socket with SSL in server mode
+            val ssf = serverSSLContext.socketFactory as SSLSocketFactory
+            clientSSLSocket = ssf.createSocket(
+                clientSocket,
+                clientSocket.inetAddress.hostAddress,
+                clientSocket.port,
+                false // Don't auto-close underlying socket
+            ) as SSLSocket
             
-            val sslSocket = (sslContext.socketFactory as SSLSocketFactory)
-                .createSocket(clientSocket, hostname, port, true) as SSLSocket
+            clientSSLSocket.useClientMode = false // We are the server
+            clientSSLSocket.soTimeout = SOCKET_TIMEOUT
             
-            sslSocket.useClientMode = false
-            sslSocket.startHandshake()
+            // Perform TLS handshake with client
+            withContext(Dispatchers.IO) {
+                clientSSLSocket.startHandshake()
+            }
+            Log.d(TAG, "TLS handshake with client completed for $hostname")
             
-            val sslInput = BufferedInputStream(sslSocket.getInputStream())
-            val sslOutput = BufferedOutputStream(sslSocket.getOutputStream())
-            
-            handleDecryptedTraffic(sslSocket, sslInput, sslOutput, hostname, port)
-        } catch (e: Exception) {
-            Log.e(TAG, "SSL interception failed for $hostname", e)
-            tunnelConnection(clientSocket, hostname, port)
-        }
-    }
-    
-    private suspend fun handleDecryptedTraffic(
-        clientSocket: Socket,
-        clientInput: BufferedInputStream,
-        clientOutput: BufferedOutputStream,
-        hostname: String,
-        port: Int
-    ) {
-        try {
+            // Step 2: Create SSL connection to actual origin server (act as client)
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
                 override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
                 override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
                 override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
             })
             
-            val sslContext = SSLContext.getInstance("TLS")
-            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+            val clientSSLContext = SSLContext.getInstance("TLS")
+            clientSSLContext.init(null, trustAllCerts, java.security.SecureRandom())
             
-            val serverSocket = sslContext.socketFactory.createSocket(hostname, port) as SSLSocket
-            serverSocket.startHandshake()
-            
-            val serverInput = BufferedInputStream(serverSocket.getInputStream())
-            val serverOutput = BufferedOutputStream(serverSocket.getOutputStream())
-            
-            val requestLine = readLine(clientInput)
-            if (requestLine.isNullOrEmpty()) {
-                serverSocket.close()
-                return
+            serverSSLSocket = withContext(Dispatchers.IO) {
+                clientSSLContext.socketFactory.createSocket(hostname, port) as SSLSocket
             }
-            
-            val parts = requestLine.split(" ")
-            val method = parts.getOrNull(0) ?: "GET"
-            val path = parts.getOrNull(1) ?: "/"
-            
-            val requestHeaders = mutableMapOf<String, String>()
-            val requestBuilder = StringBuilder()
-            requestBuilder.append(requestLine).append("\r\n")
-            
-            var contentLength = 0
-            while (true) {
-                val line = readLine(clientInput) ?: break
-                if (line.isEmpty()) {
-                    requestBuilder.append("\r\n")
-                    break
-                }
-                requestBuilder.append(line).append("\r\n")
-                
-                val colonIndex = line.indexOf(":")
-                if (colonIndex > 0) {
-                    val key = line.substring(0, colonIndex).trim()
-                    val value = line.substring(colonIndex + 1).trim()
-                    requestHeaders[key] = value
-                    if (key.equals("Content-Length", ignoreCase = true)) {
-                        contentLength = value.toIntOrNull() ?: 0
-                    }
-                }
-            }
+            serverSSLSocket.soTimeout = SOCKET_TIMEOUT
             
             withContext(Dispatchers.IO) {
-                serverOutput.write(requestBuilder.toString().toByteArray())
-                
-                if (contentLength > 0) {
-                    val body = ByteArray(contentLength)
-                    clientInput.read(body, 0, contentLength)
-                    serverOutput.write(body)
-                }
-                
-                serverOutput.flush()
+                serverSSLSocket.startHandshake()
             }
+            Log.d(TAG, "TLS handshake with origin server $hostname:$port completed")
             
-            val responseLine = readLine(serverInput)
-            if (responseLine == null) {
-                serverSocket.close()
-                return
-            }
+            // Step 3: Forward traffic bidirectionally with interception
+            handleInterceptedTraffic(
+                clientSSLSocket,
+                serverSSLSocket,
+                hostname
+            )
             
-            val responseCode = responseLine.split(" ").getOrNull(1)?.toIntOrNull() ?: 0
-            
-            val responseHeaders = mutableMapOf<String, String>()
-            val responseBuilder = StringBuilder()
-            responseBuilder.append(responseLine).append("\r\n")
-            
-            var responseContentLength = -1
-            var isChunked = false
-            
-            while (true) {
-                val line = readLine(serverInput) ?: break
-                if (line.isEmpty()) {
-                    responseBuilder.append("\r\n")
-                    break
-                }
-                responseBuilder.append(line).append("\r\n")
-                
-                val colonIndex = line.indexOf(":")
-                if (colonIndex > 0) {
-                    val key = line.substring(0, colonIndex).trim()
-                    val value = line.substring(colonIndex + 1).trim()
-                    responseHeaders[key] = value
-                    
-                    if (key.equals("Content-Length", ignoreCase = true)) {
-                        responseContentLength = value.toIntOrNull() ?: 0
-                    }
-                    if (key.equals("Transfer-Encoding", ignoreCase = true) && value.contains("chunked")) {
-                        isChunked = true
-                    }
-                }
-            }
-            
-            val responseBodyBytes = ByteArrayOutputStream()
-            
-            if (isChunked) {
-                readChunkedBody(serverInput, responseBodyBytes)
-            } else if (responseContentLength > 0) {
-                val buffer = ByteArray(responseContentLength)
-                var totalRead = 0
-                while (totalRead < responseContentLength) {
-                    val read = withContext(Dispatchers.IO) {
-                        serverInput.read(buffer, totalRead, responseContentLength - totalRead)
-                    }
-                    if (read == -1) break
-                    totalRead += read
-                }
-                responseBodyBytes.write(buffer, 0, totalRead)
-            }
-            
-            val responseBody = responseBodyBytes.toString(StandardCharsets.UTF_8.name())
-            
-            withContext(Dispatchers.IO) {
-                clientOutput.write(responseBuilder.toString().toByteArray())
-                clientOutput.write(responseBodyBytes.toByteArray())
-                clientOutput.flush()
-            }
-            
-            if (responseBody.isNotEmpty() && 
-                (responseHeaders["Content-Type"]?.contains("json") == true ||
-                 responseBody.trimStart().startsWith("{"))) {
-                
-                val intercepted = InterceptedData(
-                    hostname = hostname,
-                    path = path,
-                    method = method,
-                    requestHeaders = requestHeaders,
-                    responseCode = responseCode,
-                    responseHeaders = responseHeaders,
-                    responseBody = responseBody
-                )
-                
-                interceptCallback(intercepted)
-                Log.d(TAG, "Intercepted: $method $hostname$path (${responseBody.length} bytes)")
-            }
-            
-            serverSocket.close()
+        } catch (e: SSLHandshakeException) {
+            Log.e(TAG, "SSL handshake failed for $hostname: ${e.message}")
+            // Fall back to tunneling without interception
+            tunnelConnection(clientSocket, hostname, port)
         } catch (e: Exception) {
-            Log.e(TAG, "Error in decrypted traffic handling", e)
+            Log.e(TAG, "SSL interception error for $hostname", e)
+        } finally {
+            clientSSLSocket?.closeQuietly()
+            serverSSLSocket?.closeQuietly()
+        }
+    }
+    
+    /**
+     * Handle the decrypted HTTP traffic between client and server
+     */
+    private suspend fun handleInterceptedTraffic(
+        clientSocket: SSLSocket,
+        serverSocket: SSLSocket,
+        hostname: String
+    ) {
+        val clientInput = BufferedInputStream(clientSocket.getInputStream())
+        val clientOutput = BufferedOutputStream(clientSocket.getOutputStream())
+        val serverInput = BufferedInputStream(serverSocket.getInputStream())
+        val serverOutput = BufferedOutputStream(serverSocket.getOutputStream())
+        
+        try {
+            // Keep processing requests until connection closes
+            while (!clientSocket.isClosed && !serverSocket.isClosed) {
+                // Read request from client
+                val requestLine = readLine(clientInput) ?: break
+                if (requestLine.isEmpty()) continue
+                
+                val parts = requestLine.split(" ")
+                val method = parts.getOrNull(0) ?: "GET"
+                val path = parts.getOrNull(1) ?: "/"
+                
+                // Read request headers
+                val requestHeaders = mutableMapOf<String, String>()
+                val requestBuilder = StringBuilder()
+                requestBuilder.append(requestLine).append("\r\n")
+                
+                var contentLength = 0
+                while (true) {
+                    val line = readLine(clientInput) ?: break
+                    if (line.isEmpty()) {
+                        requestBuilder.append("\r\n")
+                        break
+                    }
+                    requestBuilder.append(line).append("\r\n")
+                    
+                    val colonIndex = line.indexOf(":")
+                    if (colonIndex > 0) {
+                        val key = line.substring(0, colonIndex).trim()
+                        val value = line.substring(colonIndex + 1).trim()
+                        requestHeaders[key] = value
+                        if (key.equals("Content-Length", ignoreCase = true)) {
+                            contentLength = value.toIntOrNull() ?: 0
+                        }
+                    }
+                }
+                
+                // Forward request to server
+                withContext(Dispatchers.IO) {
+                    serverOutput.write(requestBuilder.toString().toByteArray())
+                    
+                    // Forward request body if present
+                    if (contentLength > 0) {
+                        val body = ByteArray(contentLength)
+                        var read = 0
+                        while (read < contentLength) {
+                            val r = clientInput.read(body, read, contentLength - read)
+                            if (r == -1) break
+                            read += r
+                        }
+                        serverOutput.write(body, 0, read)
+                    }
+                    serverOutput.flush()
+                }
+                
+                // Read response from server
+                val responseLine = readLine(serverInput) ?: break
+                val responseCode = responseLine.split(" ").getOrNull(1)?.toIntOrNull() ?: 0
+                
+                val responseHeaders = mutableMapOf<String, String>()
+                val responseBuilder = StringBuilder()
+                responseBuilder.append(responseLine).append("\r\n")
+                
+                var responseContentLength = -1
+                var isChunked = false
+                
+                while (true) {
+                    val line = readLine(serverInput) ?: break
+                    if (line.isEmpty()) {
+                        responseBuilder.append("\r\n")
+                        break
+                    }
+                    responseBuilder.append(line).append("\r\n")
+                    
+                    val colonIndex = line.indexOf(":")
+                    if (colonIndex > 0) {
+                        val key = line.substring(0, colonIndex).trim()
+                        val value = line.substring(colonIndex + 1).trim()
+                        responseHeaders[key] = value
+                        
+                        if (key.equals("Content-Length", ignoreCase = true)) {
+                            responseContentLength = value.toIntOrNull() ?: 0
+                        }
+                        if (key.equals("Transfer-Encoding", ignoreCase = true) && value.contains("chunked")) {
+                            isChunked = true
+                        }
+                    }
+                }
+                
+                // Read response body
+                val responseBodyBytes = ByteArrayOutputStream()
+                
+                if (isChunked) {
+                    readChunkedBody(serverInput, responseBodyBytes)
+                } else if (responseContentLength > 0) {
+                    val buffer = ByteArray(minOf(responseContentLength, BUFFER_SIZE))
+                    var totalRead = 0
+                    while (totalRead < responseContentLength) {
+                        val toRead = minOf(buffer.size, responseContentLength - totalRead)
+                        val read = withContext(Dispatchers.IO) {
+                            serverInput.read(buffer, 0, toRead)
+                        }
+                        if (read == -1) break
+                        responseBodyBytes.write(buffer, 0, read)
+                        totalRead += read
+                    }
+                }
+                
+                // Forward response to client
+                withContext(Dispatchers.IO) {
+                    clientOutput.write(responseBuilder.toString().toByteArray())
+                    clientOutput.write(responseBodyBytes.toByteArray())
+                    clientOutput.flush()
+                }
+                
+                // Intercept JSON responses for analysis
+                val responseBody = responseBodyBytes.toString(StandardCharsets.UTF_8.name())
+                if (responseBody.isNotEmpty() && 
+                    (responseHeaders["Content-Type"]?.contains("json") == true ||
+                     responseBody.trimStart().startsWith("{"))) {
+                    
+                    val intercepted = InterceptedData(
+                        hostname = hostname,
+                        path = path,
+                        method = method,
+                        requestHeaders = requestHeaders,
+                        responseCode = responseCode,
+                        responseHeaders = responseHeaders,
+                        responseBody = responseBody
+                    )
+                    
+                    interceptCallback(intercepted)
+                    Log.d(TAG, "Intercepted: $method $hostname$path (${responseBody.length} bytes)")
+                }
+                
+                // Check for Connection: close header
+                val connectionHeader = responseHeaders["Connection"] ?: requestHeaders["Connection"]
+                if (connectionHeader?.equals("close", ignoreCase = true) == true) {
+                    break
+                }
+            }
+        } catch (e: SocketTimeoutException) {
+            Log.d(TAG, "Connection timeout for $hostname")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in intercepted traffic for $hostname", e)
         }
     }
     
@@ -359,7 +416,7 @@ class SanadHttpProxy(
             }
             
             if (size == 0) {
-                readLine(input)
+                readLine(input) // Trailing CRLF
                 break
             }
             
@@ -374,7 +431,7 @@ class SanadHttpProxy(
             }
             output.write(chunk, 0, totalRead)
             
-            readLine(input)
+            readLine(input) // Chunk trailing CRLF
         }
     }
     
@@ -383,7 +440,8 @@ class SanadHttpProxy(
         clientInput: BufferedInputStream,
         clientOutput: BufferedOutputStream,
         method: String,
-        url: String
+        url: String,
+        requestLine: String
     ) {
         try {
             val uri = URI(url)
@@ -393,6 +451,7 @@ class SanadHttpProxy(
                        (if (uri.rawQuery != null) "?${uri.rawQuery}" else "")
             
             val serverSocket = Socket(hostname, port)
+            serverSocket.soTimeout = SOCKET_TIMEOUT
             val serverInput = BufferedInputStream(serverSocket.getInputStream())
             val serverOutput = BufferedOutputStream(serverSocket.getOutputStream())
             
@@ -432,8 +491,10 @@ class SanadHttpProxy(
     }
     
     private suspend fun tunnelConnection(clientSocket: Socket, hostname: String, port: Int) {
+        var serverSocket: Socket? = null
         try {
-            val serverSocket = Socket(hostname, port)
+            serverSocket = Socket(hostname, port)
+            serverSocket.soTimeout = SOCKET_TIMEOUT
             
             val job1 = scope.launch {
                 tunnel(clientSocket.getInputStream(), serverSocket.getOutputStream())
@@ -444,10 +505,10 @@ class SanadHttpProxy(
             
             job1.join()
             job2.join()
-            
-            serverSocket.close()
         } catch (e: Exception) {
             Log.e(TAG, "Tunnel error to $hostname:$port", e)
+        } finally {
+            serverSocket?.closeQuietly()
         }
     }
     
@@ -464,6 +525,8 @@ class SanadHttpProxy(
                     output.flush()
                 }
             }
+        } catch (e: SocketTimeoutException) {
+            // Timeout is expected
         } catch (e: Exception) {
             // Connection closed
         }
@@ -479,7 +542,7 @@ class SanadHttpProxy(
                     return@withContext if (line.isEmpty()) null else line.toString()
                 }
                 if (b == '\n'.code) {
-                    if (prevByte == '\r'.code) {
+                    if (prevByte == '\r'.code && line.isNotEmpty()) {
                         line.deleteCharAt(line.length - 1)
                     }
                     break
@@ -495,5 +558,11 @@ class SanadHttpProxy(
         return DELIVERY_APP_DOMAINS.any { domain ->
             hostname == domain || hostname.endsWith(".$domain")
         }
+    }
+    
+    private fun Socket.closeQuietly() {
+        try {
+            this.close()
+        } catch (e: Exception) { }
     }
 }
