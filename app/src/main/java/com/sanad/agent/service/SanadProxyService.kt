@@ -141,11 +141,11 @@ class SanadProxyService : Service() {
         serviceScope.launch {
             try {
                 val parser = DeliveryAppParser()
-                val orderInfo = parser.parseResponse(data.hostname, data.responseBody)
+                val parsedOrder = parser.parseInterceptedData(data)
                 
-                if (orderInfo != null) {
-                    Log.i(TAG, "Extracted order: ${orderInfo.orderId} from ${data.hostname}")
-                    sendToServer(serverUrl, orderInfo, data.responseBody)
+                if (parsedOrder != null) {
+                    Log.i(TAG, "Extracted order: ${parsedOrder.orderId} from ${parsedOrder.deliveryApp}")
+                    sendToServer(serverUrl, parsedOrder)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing intercepted data", e)
@@ -153,7 +153,7 @@ class SanadProxyService : Service() {
         }
     }
     
-    private suspend fun sendToServer(serverUrl: String, orderInfo: DeliveryAppParser.OrderInfo, rawJson: String) {
+    private suspend fun sendToServer(serverUrl: String, order: DeliveryAppParser.ParsedOrder) {
         try {
             val url = java.net.URL("$serverUrl/api/intercept/order")
             val connection = withContext(Dispatchers.IO) {
@@ -164,13 +164,21 @@ class SanadProxyService : Service() {
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
             
+            val escapedJson = order.rawJson
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+            
             val payload = """
                 {
-                    "orderId": "${orderInfo.orderId}",
-                    "source": "${orderInfo.source}",
-                    "eta": ${orderInfo.eta?.let { "\"$it\"" } ?: "null"},
-                    "status": ${orderInfo.status?.let { "\"$it\"" } ?: "null"},
-                    "rawData": ${rawJson.replace("\"", "\\\"")}
+                    "orderId": "${order.orderId}",
+                    "source": "${order.deliveryApp}",
+                    "restaurantName": "${order.restaurantName}",
+                    "status": "${order.orderStatus}",
+                    "eta": ${order.eta?.let { "\"$it\"" } ?: "null"},
+                    "totalAmount": ${order.totalAmount ?: "null"},
+                    "rawData": "$escapedJson"
                 }
             """.trimIndent()
             
