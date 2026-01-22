@@ -85,6 +85,12 @@
             </intent-filter>
         </service>
 
+        <!-- HTTP Proxy Service for SSL Interception -->
+        <service
+            android:name=".service.SanadProxyService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Boot Receiver - Start monitoring on device boot -->
         <receiver
             android:name=".service.BootReceiver"
