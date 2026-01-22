@@ -7,9 +7,12 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 import com.sanad.agent.api.SanadApiClient
 import com.sanad.agent.model.DeliveryApps
 import kotlinx.coroutines.*
@@ -26,14 +29,18 @@ class SanadAccessibilityService : AccessibilityService() {
         
         private const val ANALYSIS_DEBOUNCE_MS = 3000L
         private const val MIN_TEXT_LENGTH = 50
+        private const val NOTIFICATION_COOLDOWN_MS = 30000L
     }
     
     private lateinit var apiClient: SanadApiClient
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var lastAnalysisTime = 0L
     private var lastAnalyzedText = ""
     private var pendingPasteText: String? = null
     private var targetChatPackage: String? = null
+    private var lastNotifiedApp: String? = null
+    private var lastNotificationTime = 0L
     
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -65,6 +72,8 @@ class SanadAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: return
         if (!DeliveryApps.getSupportedPackageNames().contains(packageName)) return
         
+        showWatchingNotification(packageName)
+        
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
@@ -77,6 +86,29 @@ class SanadAccessibilityService : AccessibilityService() {
                 }
             }
         }
+    }
+    
+    private fun showWatchingNotification(packageName: String) {
+        val now = System.currentTimeMillis()
+        if (packageName == lastNotifiedApp && now - lastNotificationTime < NOTIFICATION_COOLDOWN_MS) {
+            return
+        }
+        
+        lastNotifiedApp = packageName
+        lastNotificationTime = now
+        
+        val appConfig = DeliveryApps.getByPackageName(packageName)
+        val appName = appConfig?.appNameArabic ?: "التطبيق"
+        
+        mainHandler.post {
+            Toast.makeText(
+                applicationContext,
+                "سند معاك - نراقب طلبك من $appName",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+        
+        Log.d(TAG, "Showed watching notification for $appName")
     }
     
     private fun analyzeScreenWithAI(rootNode: AccessibilityNodeInfo, packageName: String) {
