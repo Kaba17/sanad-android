@@ -25,6 +25,27 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.nio.ByteBuffer
 
+/**
+ * SanadVpnService - R&D Network Interception Layer
+ * 
+ * NOTE: This is an experimental/R&D feature. The production approach for Sanad
+ * uses the Accessibility Service (SanadAccessibilityService) which reliably
+ * captures screen text and sends it for AI analysis.
+ * 
+ * Current Limitations:
+ * - VPN packet interception requires a userland TCP/IP stack (e.g., tun2socks, lwip)
+ *   to properly route TCP traffic to the local HTTP proxy
+ * - Without such a stack, the proxy only intercepts when explicitly configured
+ * - DNS handling is implemented but TCP routing to proxy is pass-through
+ * 
+ * For proper MITM interception, consider:
+ * 1. Integrating tun2socks library for TUN-to-SOCKS proxy
+ * 2. Using device proxy settings (some apps ignore this)
+ * 3. Root-based iptables NAT rules
+ * 
+ * Current Status: Logs packets and handles DNS, but full interception requires
+ * manual proxy configuration or additional infrastructure.
+ */
 class SanadVpnService : VpnService() {
     
     companion object {
@@ -256,6 +277,15 @@ class SanadVpnService : VpnService() {
             val dnsDataStart = ipHeaderLength + udpHeaderLength
             val dnsData = data.copyOfRange(dnsDataStart, length)
             
+            // Extract source/dest info from original packet for response
+            val srcIp = ByteArray(4)
+            val dstIp = ByteArray(4)
+            System.arraycopy(data, 12, srcIp, 0, 4) // Source IP
+            System.arraycopy(data, 16, dstIp, 0, 4) // Dest IP
+            
+            val srcPort = ((data[ipHeaderLength].toInt() and 0xFF) shl 8) or
+                          (data[ipHeaderLength + 1].toInt() and 0xFF)
+            
             val dnsSocket = DatagramSocket()
             protect(dnsSocket)
             
@@ -278,9 +308,52 @@ class SanadVpnService : VpnService() {
                 dnsSocket.receive(responsePacket)
             }
             
+            val dnsResponse = responseBuffer.copyOf(responsePacket.length)
             dnsSocket.close()
             
-            Log.v(TAG, "DNS query resolved (${responsePacket.length} bytes)")
+            // Craft response IP packet
+            // This is a simplified version - a full implementation would calculate checksums
+            val responseLength = 20 + 8 + dnsResponse.size // IP + UDP + DNS
+            val response = ByteArray(responseLength)
+            
+            // IP Header (simplified - no checksum calculation)
+            response[0] = 0x45.toByte() // Version 4, IHL 5
+            response[1] = 0x00.toByte() // DSCP/ECN
+            response[2] = ((responseLength shr 8) and 0xFF).toByte() // Total length (high)
+            response[3] = (responseLength and 0xFF).toByte() // Total length (low)
+            response[4] = 0x00.toByte() // Identification
+            response[5] = 0x00.toByte()
+            response[6] = 0x40.toByte() // Flags: Don't fragment
+            response[7] = 0x00.toByte() // Fragment offset
+            response[8] = 0x40.toByte() // TTL
+            response[9] = 0x11.toByte() // Protocol: UDP
+            response[10] = 0x00.toByte() // Header checksum (calculated by kernel)
+            response[11] = 0x00.toByte()
+            // Source = original destination (DNS server), Dest = original source
+            System.arraycopy(dstIp, 0, response, 12, 4) // Swap IPs
+            System.arraycopy(srcIp, 0, response, 16, 4)
+            
+            // UDP Header
+            response[20] = 0x00.toByte() // Source port: 53 (high)
+            response[21] = 0x35.toByte() // Source port: 53 (low)
+            response[22] = ((srcPort shr 8) and 0xFF).toByte() // Dest port (high)
+            response[23] = (srcPort and 0xFF).toByte() // Dest port (low)
+            val udpLength = 8 + dnsResponse.size
+            response[24] = ((udpLength shr 8) and 0xFF).toByte() // UDP length (high)
+            response[25] = (udpLength and 0xFF).toByte() // UDP length (low)
+            response[26] = 0x00.toByte() // Checksum (optional for IPv4)
+            response[27] = 0x00.toByte()
+            
+            // DNS Response data
+            System.arraycopy(dnsResponse, 0, response, 28, dnsResponse.size)
+            
+            // Write response back to TUN
+            withContext(Dispatchers.IO) {
+                outputStream.write(response)
+                outputStream.flush()
+            }
+            
+            Log.v(TAG, "DNS query resolved and response sent (${dnsResponse.size} bytes)")
             
         } catch (e: Exception) {
             Log.e(TAG, "DNS handling error", e)
