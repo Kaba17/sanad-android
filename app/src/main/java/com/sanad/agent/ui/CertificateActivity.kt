@@ -1,6 +1,9 @@
 package com.sanad.agent.ui
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -18,6 +21,21 @@ class CertificateActivity : AppCompatActivity() {
     private lateinit var binding: ActivityCertificateBinding
     private lateinit var certificateManager: SanadCertificateManager
     
+    private val proxyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                SanadProxyService.ACTION_STATUS_CHANGED -> {
+                    updateProxyUI()
+                }
+                SanadProxyService.ACTION_ERROR -> {
+                    val error = intent.getStringExtra(SanadProxyService.EXTRA_ERROR_MESSAGE)
+                    Toast.makeText(this@CertificateActivity, error, Toast.LENGTH_LONG).show()
+                    updateProxyUI()
+                }
+            }
+        }
+    }
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityCertificateBinding.inflate(layoutInflater)
@@ -28,11 +46,29 @@ class CertificateActivity : AppCompatActivity() {
         
         setupUI()
         updateStatus()
+        registerProxyReceiver()
     }
     
     override fun onResume() {
         super.onResume()
         updateProxyUI()
+    }
+    
+    override fun onDestroy() {
+        unregisterReceiver(proxyReceiver)
+        super.onDestroy()
+    }
+    
+    private fun registerProxyReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(SanadProxyService.ACTION_STATUS_CHANGED)
+            addAction(SanadProxyService.ACTION_ERROR)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(proxyReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(proxyReceiver, filter)
+        }
     }
     
     private fun setupUI() {
@@ -66,39 +102,13 @@ class CertificateActivity : AppCompatActivity() {
     }
     
     private fun startProxy() {
-        val serverUrl = getSharedPreferences("sanad_prefs", MODE_PRIVATE)
-            .getString("server_url", "") ?: ""
-        
-        if (serverUrl.isEmpty()) {
-            Toast.makeText(
-                this,
-                "يجب ضبط رابط الخادم أولاً من الإعدادات",
-                Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-        
         SanadProxyService.start(this)
-        
-        binding.postDelayed({
-            updateProxyUI()
-            if (SanadProxyService.isRunning) {
-                Toast.makeText(
-                    this,
-                    "تم تشغيل Proxy على المنفذ 8888",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }, 500)
+        Toast.makeText(this, "جاري تشغيل Proxy...", Toast.LENGTH_SHORT).show()
     }
     
     private fun stopProxy() {
         SanadProxyService.stop(this)
-        
-        binding.postDelayed({
-            updateProxyUI()
-            Toast.makeText(this, "تم إيقاف Proxy", Toast.LENGTH_SHORT).show()
-        }, 300)
+        Toast.makeText(this, "تم إيقاف Proxy", Toast.LENGTH_SHORT).show()
     }
     
     private fun updateProxyUI() {
