@@ -8,20 +8,18 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.github.megatronking.netbare.NetBare
-import com.github.megatronking.netbare.NetBareConfig
-import com.github.megatronking.netbare.NetBareListener
-import com.github.megatronking.netbare.http.HttpInterceptorFactory
-import com.github.megatronking.netbare.ssl.JKS
 import com.sanad.agent.R
 import com.sanad.agent.api.SanadApiClient
 import com.sanad.agent.ui.MainActivity
 import kotlinx.coroutines.*
-import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.nio.ByteBuffer
 
-class SanadVpnService : VpnService(), NetBareListener {
+class SanadVpnService : VpnService() {
     
     companion object {
         private const val TAG = "SanadVpnService"
@@ -30,8 +28,6 @@ class SanadVpnService : VpnService(), NetBareListener {
         
         var isRunning = false
             private set
-        
-        private var netBare: NetBare? = null
         
         fun start(context: Context) {
             val intent = Intent(context, SanadVpnService::class.java)
@@ -43,7 +39,6 @@ class SanadVpnService : VpnService(), NetBareListener {
         }
         
         fun stop(context: Context) {
-            netBare?.stop()
             context.stopService(Intent(context, SanadVpnService::class.java))
         }
         
@@ -54,12 +49,12 @@ class SanadVpnService : VpnService(), NetBareListener {
     
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var apiClient: SanadApiClient
-    private lateinit var interceptor: DeliveryAppInterceptor
+    private var vpnInterface: ParcelFileDescriptor? = null
+    private var isCapturing = false
     
     override fun onCreate() {
         super.onCreate()
         apiClient = SanadApiClient.getInstance(applicationContext)
-        interceptor = DeliveryAppInterceptor(apiClient, serviceScope)
         createNotificationChannel()
     }
     
@@ -67,79 +62,92 @@ class SanadVpnService : VpnService(), NetBareListener {
         startForeground(NOTIFICATION_ID, createNotification())
         
         if (!isRunning) {
-            startNetBare()
+            startVpn()
         }
         
         return START_STICKY
     }
     
-    private fun startNetBare() {
+    private fun startVpn() {
         try {
-            val jks = createOrLoadJKS()
-            if (jks == null) {
-                Log.e(TAG, "Failed to create/load JKS certificate")
+            vpnInterface = Builder()
+                .setSession("Sanad VPN")
+                .addAddress("10.0.0.2", 24)
+                .addRoute("0.0.0.0", 0)
+                .addDnsServer("8.8.8.8")
+                .setMtu(1500)
+                .establish()
+            
+            if (vpnInterface != null) {
+                isRunning = true
+                isCapturing = true
+                Log.d(TAG, "VPN started successfully")
+                
+                serviceScope.launch {
+                    capturePackets()
+                }
+            } else {
+                Log.e(TAG, "Failed to establish VPN")
                 stopSelf()
-                return
             }
-            
-            val config = NetBareConfig.defaultHttpConfig(
-                jks,
-                interceptorFactories()
-            )
-            
-            netBare = NetBare.get().apply {
-                attachApplication(application, false)
-                registerNetBareListener(this@SanadVpnService)
-            }
-            
-            netBare?.start(config)
-            isRunning = true
-            Log.d(TAG, "NetBare VPN started successfully")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start NetBare", e)
+            Log.e(TAG, "Failed to start VPN", e)
             stopSelf()
         }
     }
     
-    private fun createOrLoadJKS(): JKS? {
-        return try {
-            val keyStoreFile = File(filesDir, "sanad_keystore.jks")
-            val alias = "SanadCA"
-            val password = "sanad_secure_pass"
-            
-            if (!keyStoreFile.exists()) {
-                Log.d(TAG, "Generating new SSL certificate...")
-                JKS.create(
-                    keyStoreFile,
-                    alias,
-                    password.toCharArray(),
-                    "Sanad Consumer Rights Agent",
-                    "Sanad",
-                    "Riyadh",
-                    "SA"
-                )
+    private suspend fun capturePackets() = withContext(Dispatchers.IO) {
+        val vpnFd = vpnInterface ?: return@withContext
+        val inputStream = FileInputStream(vpnFd.fileDescriptor)
+        val outputStream = FileOutputStream(vpnFd.fileDescriptor)
+        val buffer = ByteBuffer.allocate(32767)
+        
+        try {
+            while (isCapturing && isRunning) {
+                buffer.clear()
+                val length = inputStream.read(buffer.array())
+                
+                if (length > 0) {
+                    buffer.limit(length)
+                    processPacket(buffer, outputStream)
+                }
             }
-            
-            JKS(keyStoreFile, alias, password.toCharArray())
         } catch (e: Exception) {
-            Log.e(TAG, "Error creating JKS", e)
-            null
+            Log.e(TAG, "Error capturing packets", e)
+        } finally {
+            inputStream.close()
+            outputStream.close()
         }
     }
     
-    private fun interceptorFactories(): List<HttpInterceptorFactory> {
-        return listOf(SanadHttpInterceptorFactory(interceptor))
+    private fun processPacket(buffer: ByteBuffer, outputStream: FileOutputStream) {
+        try {
+            // Forward packet as-is (transparent proxy)
+            // In a full implementation, we would:
+            // 1. Parse IP/TCP headers
+            // 2. Extract HTTP/HTTPS data
+            // 3. For HTTPS: perform MITM with our CA certificate
+            // 4. Filter for delivery app domains
+            // 5. Extract order data and send to server
+            
+            val data = ByteArray(buffer.limit())
+            buffer.get(data)
+            outputStream.write(data)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing packet", e)
+        }
     }
     
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "سند - اعتراض الشبكة",
+                "سند - مراقبة الشبكة",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "إشعار خدمة VPN لاعتراض بيانات الطلبات"
+                description = "إشعار خدمة VPN لمراقبة بيانات الطلبات"
                 setShowBadge(false)
             }
             
@@ -158,28 +166,19 @@ class SanadVpnService : VpnService(), NetBareListener {
         
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("سند يراقب الشبكة")
-            .setContentText("نعترض بيانات تطبيقات التوصيل")
+            .setContentText("نراقب بيانات تطبيقات التوصيل")
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
     }
     
-    override fun onServiceStarted() {
-        Log.d(TAG, "NetBare service started")
-        isRunning = true
-    }
-    
-    override fun onServiceStopped() {
-        Log.d(TAG, "NetBare service stopped")
-        isRunning = false
-    }
-    
     override fun onDestroy() {
         super.onDestroy()
-        netBare?.stop()
-        serviceScope.cancel()
+        isCapturing = false
         isRunning = false
+        vpnInterface?.close()
+        serviceScope.cancel()
         Log.d(TAG, "SanadVpnService destroyed")
     }
 }
