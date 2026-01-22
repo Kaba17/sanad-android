@@ -10,11 +10,11 @@ import android.net.VpnService
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.github.AgitoXIV.netbare.NetBare
-import com.github.AgitoXIV.netbare.NetBareConfig
-import com.github.AgitoXIV.netbare.NetBareListener
-import com.github.AgitoXIV.netbare.http.HttpInterceptorFactory
-import com.github.AgitoXIV.netbare.ssl.JKS
+import com.github.megatronking.netbare.NetBare
+import com.github.megatronking.netbare.NetBareConfig
+import com.github.megatronking.netbare.NetBareListener
+import com.github.megatronking.netbare.http.HttpInterceptorFactory
+import com.github.megatronking.netbare.ssl.JKS
 import com.sanad.agent.R
 import com.sanad.agent.api.SanadApiClient
 import com.sanad.agent.ui.MainActivity
