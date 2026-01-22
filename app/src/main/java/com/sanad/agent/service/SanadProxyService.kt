@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.sanad.agent.R
+import com.sanad.agent.ssl.DeliveryAppParser
 import com.sanad.agent.ssl.SanadCertificateManager
 import com.sanad.agent.ssl.SanadHttpProxy
 import com.sanad.agent.ui.CertificateActivity
@@ -21,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SanadProxyService : Service() {
     
@@ -114,7 +116,13 @@ class SanadProxyService : Service() {
                 val certManager = SanadCertificateManager(this@SanadProxyService)
                 certManager.initialize()
                 
-                httpProxy = SanadHttpProxy(certManager, serverUrl)
+                httpProxy = SanadHttpProxy(
+                    context = this@SanadProxyService,
+                    certificateManager = certManager,
+                    interceptCallback = { interceptedData ->
+                        handleInterceptedData(interceptedData, serverUrl)
+                    }
+                )
                 httpProxy?.start()
                 
                 Log.i(TAG, "Proxy started on port 8888")
@@ -126,6 +134,55 @@ class SanadProxyService : Service() {
                 broadcastStatus(false)
                 stopSelf()
             }
+        }
+    }
+    
+    private fun handleInterceptedData(data: SanadHttpProxy.InterceptedData, serverUrl: String) {
+        serviceScope.launch {
+            try {
+                val parser = DeliveryAppParser()
+                val orderInfo = parser.parseResponse(data.hostname, data.responseBody)
+                
+                if (orderInfo != null) {
+                    Log.i(TAG, "Extracted order: ${orderInfo.orderId} from ${data.hostname}")
+                    sendToServer(serverUrl, orderInfo, data.responseBody)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing intercepted data", e)
+            }
+        }
+    }
+    
+    private suspend fun sendToServer(serverUrl: String, orderInfo: DeliveryAppParser.OrderInfo, rawJson: String) {
+        try {
+            val url = java.net.URL("$serverUrl/api/intercept/order")
+            val connection = withContext(Dispatchers.IO) {
+                url.openConnection() as java.net.HttpURLConnection
+            }
+            
+            connection.requestMethod = "POST"
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.doOutput = true
+            
+            val payload = """
+                {
+                    "orderId": "${orderInfo.orderId}",
+                    "source": "${orderInfo.source}",
+                    "eta": ${orderInfo.eta?.let { "\"$it\"" } ?: "null"},
+                    "status": ${orderInfo.status?.let { "\"$it\"" } ?: "null"},
+                    "rawData": ${rawJson.replace("\"", "\\\"")}
+                }
+            """.trimIndent()
+            
+            withContext(Dispatchers.IO) {
+                connection.outputStream.use { it.write(payload.toByteArray()) }
+            }
+            
+            val responseCode = connection.responseCode
+            Log.i(TAG, "Sent order to server, response: $responseCode")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send order to server", e)
         }
     }
     
