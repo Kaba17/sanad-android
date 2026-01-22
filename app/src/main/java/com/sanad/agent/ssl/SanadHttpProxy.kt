@@ -222,6 +222,11 @@ class SanadHttpProxy(
             }
             serverSSLSocket.soTimeout = SOCKET_TIMEOUT
             
+            // Set SNI (Server Name Indication) for virtual hosts
+            val sslParams = serverSSLSocket.sslParameters
+            sslParams.serverNames = listOf(javax.net.ssl.SNIHostName(hostname))
+            serverSSLSocket.sslParameters = sslParams
+            
             withContext(Dispatchers.IO) {
                 serverSSLSocket.startHandshake()
             }
