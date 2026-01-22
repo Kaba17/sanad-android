@@ -39,4 +39,8 @@ interface SanadApi {
     // AI Screen Analysis
     @POST("api/analyze-screen")
     suspend fun analyzeScreen(@Body request: AnalyzeScreenRequest): Response<AnalyzeScreenResponse>
+    
+    // Network Interception - Send raw intercepted data
+    @POST("api/intercept/order")
+    suspend fun sendInterceptedData(@Body data: InterceptedDataRequest): Response<InterceptedDataResponse>
 }
