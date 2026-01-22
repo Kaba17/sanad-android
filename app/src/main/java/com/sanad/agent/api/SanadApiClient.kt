@@ -186,33 +186,24 @@ class SanadApiClient(private val context: Context) {
         }
     }
     
-    // Test Mode Methods
-    suspend fun createTestOrder(scenario: String): Result<TestOrderResponse> {
+    // AI Screen Analysis - Send screen text to server for AI processing
+    suspend fun analyzeScreen(screenText: String, packageName: String?): Result<AnalyzeScreenResponse> {
         return try {
-            val response = api.createTestOrder(TestOrderRequest(scenario))
+            val request = AnalyzeScreenRequest(screenText, packageName)
+            val response = api.analyzeScreen(request)
             if (response.isSuccessful && response.body() != null) {
-                Log.d(TAG, "Test order created: ${response.body()?.order?.orderId}")
-                Result.success(response.body()!!)
+                val result = response.body()!!
+                if (result.detected) {
+                    Log.d(TAG, "AI detected order: ${result.extracted?.orderId} from ${result.extracted?.appName}")
+                } else {
+                    Log.d(TAG, "AI did not detect order: ${result.reason}")
+                }
+                Result.success(result)
             } else {
                 Result.failure(Exception("Server error: ${response.code()}"))
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error creating test order", e)
-            Result.failure(e)
-        }
-    }
-    
-    suspend fun clearTestOrders(): Result<ClearTestResponse> {
-        return try {
-            val response = api.clearTestOrders()
-            if (response.isSuccessful && response.body() != null) {
-                Log.d(TAG, "Test orders cleared: ${response.body()?.deleted}")
-                Result.success(response.body()!!)
-            } else {
-                Result.failure(Exception("Server error: ${response.code()}"))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error clearing test orders", e)
+            Log.e(TAG, "Error analyzing screen", e)
             Result.failure(e)
         }
     }
