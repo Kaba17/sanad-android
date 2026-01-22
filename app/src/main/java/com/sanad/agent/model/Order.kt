@@ -94,3 +94,20 @@ data class InterceptedDataResponse(
     val order: Order? = null,
     val action: String? = null
 )
+
+// SSL Proxy Interception Models
+data class InterceptedOrderRequest(
+    @SerializedName("orderId") val orderId: String,
+    @SerializedName("restaurantName") val restaurantName: String,
+    @SerializedName("deliveryApp") val deliveryApp: String,
+    @SerializedName("status") val status: String,
+    @SerializedName("eta") val eta: String?,
+    @SerializedName("rawJson") val rawJson: String
+)
+
+data class RawInterceptRequest(
+    @SerializedName("hostname") val hostname: String,
+    @SerializedName("path") val path: String,
+    @SerializedName("method") val method: String,
+    @SerializedName("responseBody") val responseBody: String
+)
