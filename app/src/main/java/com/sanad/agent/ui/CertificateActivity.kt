@@ -9,18 +9,14 @@ import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
-import androidx.lifecycle.lifecycleScope
 import com.sanad.agent.databinding.ActivityCertificateBinding
+import com.sanad.agent.service.SanadProxyService
 import com.sanad.agent.ssl.SanadCertificateManager
-import com.sanad.agent.ssl.SanadHttpProxy
-import kotlinx.coroutines.launch
 
 class CertificateActivity : AppCompatActivity() {
     
     private lateinit var binding: ActivityCertificateBinding
     private lateinit var certificateManager: SanadCertificateManager
-    private var httpProxy: SanadHttpProxy? = null
-    private var isProxyRunning = false
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,6 +28,11 @@ class CertificateActivity : AppCompatActivity() {
         
         setupUI()
         updateStatus()
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        updateProxyUI()
     }
     
     private fun setupUI() {
@@ -57,7 +58,7 @@ class CertificateActivity : AppCompatActivity() {
     }
     
     private fun toggleProxy() {
-        if (isProxyRunning) {
+        if (SanadProxyService.isRunning) {
             stopProxy()
         } else {
             startProxy()
@@ -65,64 +66,49 @@ class CertificateActivity : AppCompatActivity() {
     }
     
     private fun startProxy() {
-        lifecycleScope.launch {
-            try {
-                val serverUrl = getSharedPreferences("sanad_prefs", MODE_PRIVATE)
-                    .getString("server_url", "") ?: ""
-                
-                if (serverUrl.isEmpty()) {
-                    Toast.makeText(
-                        this@CertificateActivity,
-                        "يجب ضبط رابط الخادم أولاً من الإعدادات",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    return@launch
-                }
-                
-                httpProxy = SanadHttpProxy(certificateManager, serverUrl)
-                httpProxy?.start()
-                
-                isProxyRunning = true
-                updateProxyUI()
-                
+        val serverUrl = getSharedPreferences("sanad_prefs", MODE_PRIVATE)
+            .getString("server_url", "") ?: ""
+        
+        if (serverUrl.isEmpty()) {
+            Toast.makeText(
+                this,
+                "يجب ضبط رابط الخادم أولاً من الإعدادات",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        
+        SanadProxyService.start(this)
+        
+        binding.postDelayed({
+            updateProxyUI()
+            if (SanadProxyService.isRunning) {
                 Toast.makeText(
-                    this@CertificateActivity,
+                    this,
                     "تم تشغيل Proxy على المنفذ 8888",
                     Toast.LENGTH_SHORT
                 ).show()
-                
-            } catch (e: Exception) {
-                Toast.makeText(
-                    this@CertificateActivity,
-                    "فشل تشغيل Proxy: ${e.message}",
-                    Toast.LENGTH_LONG
-                ).show()
             }
-        }
+        }, 500)
     }
     
     private fun stopProxy() {
-        httpProxy?.stop()
-        httpProxy = null
-        isProxyRunning = false
-        updateProxyUI()
+        SanadProxyService.stop(this)
         
-        Toast.makeText(this, "تم إيقاف Proxy", Toast.LENGTH_SHORT).show()
+        binding.postDelayed({
+            updateProxyUI()
+            Toast.makeText(this, "تم إيقاف Proxy", Toast.LENGTH_SHORT).show()
+        }, 300)
     }
     
     private fun updateProxyUI() {
-        if (isProxyRunning) {
+        if (SanadProxyService.isRunning) {
             binding.btnStartProxy.text = "إيقاف Proxy"
             binding.proxyStatusCard.visibility = View.VISIBLE
         } else {
             binding.btnStartProxy.text = "تشغيل Proxy"
             binding.proxyStatusCard.visibility = View.GONE
         }
-    }
-    
-    override fun onDestroy() {
-        httpProxy?.stop()
-        super.onDestroy()
     }
     
     private fun updateStatus() {
