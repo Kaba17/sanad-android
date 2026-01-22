@@ -65,7 +65,7 @@ class CertificateActivity : AppCompatActivity() {
             addAction(SanadProxyService.ACTION_ERROR)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(proxyReceiver, filter, RECEIVER_NOT_EXPORTED)
+            registerReceiver(proxyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(proxyReceiver, filter)
         }
