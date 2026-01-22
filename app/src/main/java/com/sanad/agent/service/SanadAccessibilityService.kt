@@ -10,11 +10,9 @@ import android.os.Bundle
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.sanad.agent.api.SanadApiClient
 import com.sanad.agent.model.DeliveryApps
-import com.sanad.agent.model.TrackedOrder
-import com.sanad.agent.util.OrderManager
-import java.text.SimpleDateFormat
-import java.util.*
+import kotlinx.coroutines.*
 
 class SanadAccessibilityService : AccessibilityService() {
     
@@ -25,9 +23,15 @@ class SanadAccessibilityService : AccessibilityService() {
         
         var isServiceRunning = false
             private set
+        
+        private const val ANALYSIS_DEBOUNCE_MS = 3000L
+        private const val MIN_TEXT_LENGTH = 50
     }
     
-    private lateinit var orderManager: OrderManager
+    private lateinit var apiClient: SanadApiClient
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var lastAnalysisTime = 0L
+    private var lastAnalyzedText = ""
     private var pendingPasteText: String? = null
     private var targetChatPackage: String? = null
     
@@ -36,7 +40,7 @@ class SanadAccessibilityService : AccessibilityService() {
         instance = this
         isServiceRunning = true
         
-        orderManager = OrderManager.getInstance(applicationContext)
+        apiClient = SanadApiClient.getInstance(applicationContext)
         
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
@@ -44,14 +48,13 @@ class SanadAccessibilityService : AccessibilityService() {
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-            notificationTimeout = 100
+            notificationTimeout = 500
             packageNames = DeliveryApps.getSupportedPackageNames().toTypedArray()
         }
         serviceInfo = info
         
-        Log.d(TAG, "Sanad Accessibility Service connected and monitoring delivery apps")
+        Log.d(TAG, "Sanad AI Accessibility Service connected - monitoring delivery apps")
         
-        // Start foreground monitor service
         val serviceIntent = Intent(this, SanadMonitorService::class.java)
         startForegroundService(serviceIntent)
     }
@@ -60,88 +63,63 @@ class SanadAccessibilityService : AccessibilityService() {
         event ?: return
         
         val packageName = event.packageName?.toString() ?: return
-        val appConfig = DeliveryApps.getByPackageName(packageName) ?: return
+        if (!DeliveryApps.getSupportedPackageNames().contains(packageName)) return
         
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // Check if we need to auto-paste complaint
                 if (shouldAutoPaste(packageName, event)) {
                     autoPasteComplaint()
                 } else {
-                    // Read and parse screen content
                     val rootNode = rootInActiveWindow ?: return
-                    parseScreenContent(rootNode, appConfig)
+                    analyzeScreenWithAI(rootNode, packageName)
                     rootNode.recycle()
                 }
             }
         }
     }
     
-    private fun parseScreenContent(rootNode: AccessibilityNodeInfo, appConfig: com.sanad.agent.model.DeliveryAppConfig) {
+    private fun analyzeScreenWithAI(rootNode: AccessibilityNodeInfo, packageName: String) {
         val screenText = extractAllText(rootNode)
         
-        // Try to extract order information
-        var orderId: String? = null
-        var eta: Date? = null
-        var status = "monitoring"
-        var restaurantName: String? = null
-        
-        // Extract order ID
-        for (pattern in appConfig.orderIdPatterns) {
-            val match = pattern.find(screenText)
-            if (match != null) {
-                orderId = match.groupValues.getOrNull(1) ?: match.value
-                break
-            }
+        if (screenText.length < MIN_TEXT_LENGTH) {
+            return
         }
         
-        // Extract ETA
-        for (pattern in appConfig.etaPatterns) {
-            val match = pattern.find(screenText)
-            if (match != null) {
-                eta = parseEta(match, screenText)
-                if (eta != null) break
-            }
+        val now = System.currentTimeMillis()
+        if (now - lastAnalysisTime < ANALYSIS_DEBOUNCE_MS) {
+            return
         }
         
-        // Determine status
-        for ((statusKey, patterns) in appConfig.statusPatterns) {
-            for (pattern in patterns) {
-                if (pattern.containsMatchIn(screenText)) {
-                    status = statusKey
-                    break
+        val textHash = screenText.hashCode().toString()
+        if (textHash == lastAnalyzedText) {
+            return
+        }
+        
+        lastAnalysisTime = now
+        lastAnalyzedText = textHash
+        
+        Log.d(TAG, "Sending screen text to AI for analysis (${screenText.length} chars)")
+        
+        serviceScope.launch {
+            try {
+                val result = apiClient.analyzeScreen(screenText, packageName)
+                result.onSuccess { response ->
+                    if (response.detected) {
+                        Log.d(TAG, "AI detected order: ${response.extracted?.orderId} (${response.action})")
+                        response.order?.let { order ->
+                            if (order.compensationStatus == "claim_ready") {
+                                Log.d(TAG, "Claim ready for order ${order.orderId}")
+                            }
+                        }
+                    }
                 }
+                result.onFailure { error ->
+                    Log.e(TAG, "AI analysis failed: ${error.message}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in AI analysis", e)
             }
-        }
-        
-        // Extract restaurant name (simple heuristic)
-        val restaurantPatterns = listOf(
-            Regex("""من\s+(.+?)(?:\s|$)"""),
-            Regex("""طلبك من\s+(.+?)(?:\s|$)"""),
-            Regex("""Order from\s+(.+?)(?:\s|$)""")
-        )
-        for (pattern in restaurantPatterns) {
-            val match = pattern.find(screenText)
-            if (match != null) {
-                restaurantName = match.groupValues.getOrNull(1)?.take(50)
-                break
-            }
-        }
-        
-        // If we found a valid order, track it
-        if (orderId != null && eta != null) {
-            val trackedOrder = TrackedOrder(
-                orderId = orderId,
-                appName = appConfig.appName,
-                appPackage = appConfig.packageName,
-                restaurantName = restaurantName,
-                eta = eta,
-                currentStatus = status
-            )
-            
-            orderManager.trackOrder(trackedOrder)
-            Log.d(TAG, "Tracking order: $orderId from ${appConfig.appName}, ETA: $eta")
         }
     }
     
@@ -162,57 +140,12 @@ class SanadAccessibilityService : AccessibilityService() {
         }
     }
     
-    private fun parseEta(match: MatchResult, fullText: String): Date? {
-        return try {
-            val calendar = Calendar.getInstance()
-            
-            // Check if it's a "within X minutes" format
-            val minutesMatch = Regex("""(\d+)\s*(دقيقة|min)""").find(match.value)
-            if (minutesMatch != null) {
-                val minutes = minutesMatch.groupValues[1].toInt()
-                calendar.add(Calendar.MINUTE, minutes)
-                return calendar.time
-            }
-            
-            // Check if it's a time format (HH:mm)
-            val timeMatch = Regex("""(\d{1,2}):(\d{2})\s*(ص|م|AM|PM)?""").find(match.value)
-            if (timeMatch != null) {
-                var hours = timeMatch.groupValues[1].toInt()
-                val minutes = timeMatch.groupValues[2].toInt()
-                val amPm = timeMatch.groupValues.getOrNull(3)
-                
-                // Handle AM/PM
-                when (amPm) {
-                    "م", "PM" -> if (hours < 12) hours += 12
-                    "ص", "AM" -> if (hours == 12) hours = 0
-                }
-                
-                calendar.set(Calendar.HOUR_OF_DAY, hours)
-                calendar.set(Calendar.MINUTE, minutes)
-                calendar.set(Calendar.SECOND, 0)
-                
-                // If time is in the past, assume it's tomorrow
-                if (calendar.time.before(Date())) {
-                    calendar.add(Calendar.DAY_OF_YEAR, 1)
-                }
-                
-                return calendar.time
-            }
-            
-            null
-        } catch (e: Exception) {
-            Log.e(TAG, "Error parsing ETA", e)
-            null
-        }
-    }
-    
     private fun shouldAutoPaste(packageName: String, event: AccessibilityEvent): Boolean {
         if (pendingPasteText == null || targetChatPackage != packageName) return false
         
         val className = event.className?.toString() ?: return false
         val appConfig = DeliveryApps.getByPackageName(packageName)
         
-        // Check if we're in the chat activity
         return appConfig?.chatActivityClass?.let { className.contains("chat", ignoreCase = true) } ?: false
     }
     
@@ -221,10 +154,8 @@ class SanadAccessibilityService : AccessibilityService() {
         val rootNode = rootInActiveWindow ?: return
         
         try {
-            // Find text input field
             val inputNode = findEditText(rootNode)
             if (inputNode != null) {
-                // Set the text
                 val arguments = Bundle().apply {
                     putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
                 }
@@ -232,11 +163,9 @@ class SanadAccessibilityService : AccessibilityService() {
                 
                 Log.d(TAG, "Auto-pasted complaint text")
                 
-                // Clear pending paste
                 pendingPasteText = null
                 targetChatPackage = null
                 
-                // Also copy to clipboard as backup
                 copyToClipboard(text)
                 
                 inputNode.recycle()
@@ -283,6 +212,7 @@ class SanadAccessibilityService : AccessibilityService() {
         super.onDestroy()
         instance = null
         isServiceRunning = false
+        serviceScope.cancel()
         Log.d(TAG, "Accessibility service destroyed")
     }
 }
