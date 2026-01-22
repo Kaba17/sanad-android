@@ -56,10 +56,19 @@ class MainActivity : AppCompatActivity() {
                 showServerUrlDialog()
             }
             
+            btnCertificate.setOnClickListener {
+                openCertificateManagement()
+            }
+            
             btnRefreshOrders.setOnClickListener {
                 loadOrders()
             }
         }
+    }
+    
+    private fun openCertificateManagement() {
+        val intent = Intent(this, CertificateActivity::class.java)
+        startActivity(intent)
     }
     
     private fun setupOrdersList() {
