@@ -311,12 +311,11 @@ class SanadVpnService : VpnService() {
             val dnsResponse = responseBuffer.copyOf(responsePacket.length)
             dnsSocket.close()
             
-            // Craft response IP packet
-            // This is a simplified version - a full implementation would calculate checksums
+            // Craft response IP packet with proper checksums
             val responseLength = 20 + 8 + dnsResponse.size // IP + UDP + DNS
             val response = ByteArray(responseLength)
             
-            // IP Header (simplified - no checksum calculation)
+            // IP Header
             response[0] = 0x45.toByte() // Version 4, IHL 5
             response[1] = 0x00.toByte() // DSCP/ECN
             response[2] = ((responseLength shr 8) and 0xFF).toByte() // Total length (high)
@@ -327,11 +326,16 @@ class SanadVpnService : VpnService() {
             response[7] = 0x00.toByte() // Fragment offset
             response[8] = 0x40.toByte() // TTL
             response[9] = 0x11.toByte() // Protocol: UDP
-            response[10] = 0x00.toByte() // Header checksum (calculated by kernel)
+            response[10] = 0x00.toByte() // Header checksum (will calculate)
             response[11] = 0x00.toByte()
             // Source = original destination (DNS server), Dest = original source
             System.arraycopy(dstIp, 0, response, 12, 4) // Swap IPs
             System.arraycopy(srcIp, 0, response, 16, 4)
+            
+            // Calculate IP header checksum
+            val ipChecksum = calculateIPChecksum(response, 0, 20)
+            response[10] = ((ipChecksum shr 8) and 0xFF).toByte()
+            response[11] = (ipChecksum and 0xFF).toByte()
             
             // UDP Header
             response[20] = 0x00.toByte() // Source port: 53 (high)
@@ -412,6 +416,30 @@ class SanadVpnService : VpnService() {
         stopSelf()
         
         Log.d(TAG, "SanadVpnService stopped")
+    }
+    
+    /**
+     * Calculate IP header checksum (RFC 791)
+     * One's complement sum of all 16-bit words in the header
+     */
+    private fun calculateIPChecksum(data: ByteArray, offset: Int, length: Int): Int {
+        var sum = 0
+        var i = offset
+        while (i < offset + length - 1) {
+            val word = ((data[i].toInt() and 0xFF) shl 8) or (data[i + 1].toInt() and 0xFF)
+            sum += word
+            i += 2
+        }
+        // Handle odd byte if present
+        if (length % 2 == 1) {
+            sum += (data[offset + length - 1].toInt() and 0xFF) shl 8
+        }
+        // Fold 32-bit sum to 16 bits
+        while (sum shr 16 != 0) {
+            sum = (sum and 0xFFFF) + (sum shr 16)
+        }
+        // One's complement
+        return (sum.inv() and 0xFFFF)
     }
     
     private fun createNotificationChannel() {
