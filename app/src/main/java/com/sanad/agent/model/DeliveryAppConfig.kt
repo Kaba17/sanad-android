@@ -13,7 +13,7 @@ data class DeliveryAppConfig(
 object DeliveryApps {
     
     val HUNGERSTATION = DeliveryAppConfig(
-        packageName = "com.hungerstation.android",
+        packageName = "com.hungerstation.android.web",
         appName = "Hungerstation",
         appNameArabic = "هنقرستيشن",
         orderIdPatterns = listOf(
